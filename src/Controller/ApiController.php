@@ -8,6 +8,7 @@ use App\Entity\PersonalRecord;
 use App\Entity\User;
 use App\Entity\WorkoutSession;
 use App\Entity\WorkoutSet;
+use App\Entity\WorkoutRoutine;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -103,7 +104,45 @@ final class ApiController
             $entityManager->flush();
         }
         $sessions = $entityManager->getRepository(WorkoutSession::class)->findBy(['user' => $user], ['startedAt' => 'DESC']);
-        return new JsonResponse(array_map(static fn (WorkoutSession $item): array => ['id' => $item->getId(), 'name' => $item->getName(), 'startedAt' => $item->getStartedAt()->format(DATE_ATOM), 'finishedAt' => $item->getFinishedAt()?->format(DATE_ATOM), 'energyRating' => $item->getEnergyRating(), 'sets' => $item->getSets()->count()], $sessions), $request->isMethod('POST') ? Response::HTTP_CREATED : Response::HTTP_OK);
+        return new JsonResponse(array_map(static function (WorkoutSession $item): array {
+            $volume = 0;
+            foreach ($item->getSets() as $set) {
+                if ($set->isCompleted()) {
+                    $volume += $set->getWeight() * $set->getReps();
+                }
+            }
+            return ['id' => $item->getId(), 'name' => $item->getName(), 'startedAt' => $item->getStartedAt()->format(DATE_ATOM), 'finishedAt' => $item->getFinishedAt()?->format(DATE_ATOM), 'energyRating' => $item->getEnergyRating(), 'sets' => $item->getSets()->count(), 'volume' => $volume];
+        }, $sessions), $request->isMethod('POST') ? Response::HTTP_CREATED : Response::HTTP_OK);
+    }
+
+    #[Route('/routines', methods: ['GET', 'POST'])]
+    public function routines(Request $request, #[CurrentUser] User $user, EntityManagerInterface $entityManager): JsonResponse
+    {
+        if ($request->isMethod('POST')) {
+            $data = $this->json($request);
+            $name = trim((string) ($data['name'] ?? ''));
+            if ($name === '') {
+                return new JsonResponse(['error' => 'Le nom de la routine est obligatoire.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            $routine = new WorkoutRoutine($user, $name, $data['exerciseIds'] ?? []);
+            $entityManager->persist($routine);
+            $entityManager->flush();
+            return new JsonResponse(['id' => $routine->getId(), 'name' => $routine->getName(), 'exerciseIds' => $routine->getExerciseIds()], Response::HTTP_CREATED);
+        }
+        $routines = $entityManager->getRepository(WorkoutRoutine::class)->findBy(['user' => $user], ['name' => 'ASC']);
+        return new JsonResponse(array_map(static fn (WorkoutRoutine $routine): array => ['id' => $routine->getId(), 'name' => $routine->getName(), 'exerciseIds' => $routine->getExerciseIds()], $routines));
+    }
+
+    #[Route('/routines/{id}', methods: ['DELETE'])]
+    public function deleteRoutine(int $id, #[CurrentUser] User $user, EntityManagerInterface $entityManager): JsonResponse
+    {
+        $routine = $entityManager->getRepository(WorkoutRoutine::class)->findOneBy(['id' => $id, 'user' => $user]);
+        if (!$routine) {
+            return new JsonResponse(['error' => 'Routine introuvable.'], Response::HTTP_NOT_FOUND);
+        }
+        $entityManager->remove($routine);
+        $entityManager->flush();
+        return new JsonResponse(null, Response::HTTP_NO_CONTENT);
     }
 
     #[Route('/measurements', methods: ['GET', 'POST'])]
