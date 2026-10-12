@@ -42,6 +42,9 @@
 
 	{$CADDY_SERVER_EXTRA_DIRECTIVES}
 
+	@home path /
+	rewrite @home /index.html
+
 	@phpRoute {
 		not path /.well-known/mercure*
 		not file {path}
