@@ -18,6 +18,10 @@ security:
         main:
             lazy: true
             provider: app_user_provider
+            form_login:
+                login_path: api_login
+                check_path: api_login_check
+                enable_csrf: false
             logout:
                 path: api_logout
 
@@ -32,6 +36,7 @@ security:
         # - { path: ^/admin, roles: ROLE_ADMIN }
         - { path: ^/api/register$, roles: PUBLIC_ACCESS }
         - { path: ^/api/login$, roles: PUBLIC_ACCESS }
+        - { path: ^/api/login-check$, roles: PUBLIC_ACCESS }
         - { path: ^/api, roles: ROLE_USER }
 
 when@test:

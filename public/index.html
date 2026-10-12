@@ -90,6 +90,30 @@
 </head>
 <body class="min-h-screen flex flex-col md:flex-row antialiased selection:bg-emerald-500 selection:text-black">
 
+    <div id="auth-overlay" class="fixed inset-0 z-[60] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-md rounded-2xl p-6 space-y-5 border border-slate-700 shadow-2xl">
+            <div class="text-center space-y-2">
+                <div class="mx-auto w-12 h-12 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center text-slate-950">
+                    <i class="fa-solid fa-dumbbell text-xl"></i>
+                </div>
+                <h2 class="text-2xl font-black text-white">Bienvenue sur PulseFit</h2>
+                <p class="text-sm text-slate-400">Connectez-vous pour sauvegarder vos séances.</p>
+            </div>
+            <form id="auth-form" class="space-y-3">
+                <input id="auth-email" type="email" required autocomplete="email" placeholder="Email"
+                    class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                <input id="auth-password" type="password" required minlength="8" autocomplete="current-password" placeholder="Mot de passe (8 caractères minimum)"
+                    class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                <button id="auth-submit" type="submit" class="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black transition">Se connecter</button>
+            </form>
+            <div class="flex items-center justify-between text-xs">
+                <button id="auth-mode-toggle" type="button" class="text-cyan-400 hover:text-cyan-300 font-bold">Créer un compte</button>
+                <button id="auth-logout" type="button" class="hidden text-slate-400 hover:text-white">Se déconnecter</button>
+            </div>
+            <p id="auth-error" class="hidden text-sm text-red-400 text-center"></p>
+        </div>
+    </div>
+
     <!-- DESKTOP SIDEBAR -->
     <aside class="hidden md:flex flex-col w-64 bg-dark-card border-r border-slate-800/80 p-5 shrink-0 justify-between">
         <div class="space-y-8">
@@ -603,6 +627,10 @@
                     <label class="text-xs font-bold text-slate-400 uppercase block mb-1">Taille (cm)</label>
                     <input type="number" step="0.5" id="m-waist" placeholder="81" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white">
                 </div>
+                <div>
+                    <label class="text-xs font-bold text-slate-400 uppercase block mb-1">Cuisse (cm)</label>
+                    <input type="number" step="0.5" id="m-thigh" placeholder="59" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white">
+                </div>
             </div>
             <div class="flex items-center justify-end gap-3 pt-3">
                 <button onclick="closeModal('modal-add-measurement')" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold">Annuler</button>
@@ -675,11 +703,91 @@
             ]
         };
 
-        let appData = JSON.parse(localStorage.getItem('pulsefit_data')) || DEFAULT_DATA;
+        let appData = JSON.parse(localStorage.getItem('pulsefit_data')) || JSON.parse(JSON.stringify(DEFAULT_DATA));
+        let currentUser = null;
+        let authMode = 'login';
+
+        async function apiFetch(path, options = {}) {
+            const isForm = options.body instanceof URLSearchParams;
+            const response = await fetch(path, {
+                credentials: 'same-origin',
+                headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...(options.headers || {}) },
+                ...options
+            });
+            const contentType = response.headers.get('content-type') || '';
+            const payload = contentType.includes('application/json') ? await response.json() : {};
+            if (!response.ok) {
+                throw new Error(payload.error || `Erreur API (${response.status})`);
+            }
+            return payload;
+        }
 
         function saveData() {
             localStorage.setItem('pulsefit_data', JSON.stringify(appData));
             updateHeaderAndStats();
+        }
+
+        async function loadRemoteData() {
+            const [exercises, measurements, sessions] = await Promise.all([
+                apiFetch('/api/exercises'),
+                apiFetch('/api/measurements'),
+                apiFetch('/api/sessions')
+            ]);
+            appData.exercises = exercises.map(exercise => ({
+                    id: exercise.id,
+                    name: exercise.name,
+                    group: exercise.muscleGroup,
+                    sets: [{ weight: 0, reps: 10, done: false, rpe: 8 }]
+            }));
+            appData.measurements = measurements.map(measurement => ({
+                ...measurement,
+                thigh: measurement.thigh || 0
+            }));
+            appData.weekDays = appData.weekDays.map(day => ({ ...day }));
+            appData.streak = sessions.length;
+            saveData();
+        }
+
+        function showAuthError(message) {
+            const error = document.getElementById('auth-error');
+            error.textContent = message;
+            error.classList.remove('hidden');
+        }
+
+        async function authenticate() {
+            try {
+                currentUser = await apiFetch('/api/me');
+                document.getElementById('auth-overlay').classList.add('hidden');
+                appData.profileName = currentUser.email;
+                await loadRemoteData();
+                initializeApp();
+            } catch {
+                document.getElementById('auth-overlay').classList.remove('hidden');
+            }
+        }
+
+        async function submitAuth(event) {
+            event.preventDefault();
+            const email = document.getElementById('auth-email').value.trim();
+            const password = document.getElementById('auth-password').value;
+            const endpoint = authMode === 'register' ? '/api/register' : '/api/login-check';
+            try {
+                const loginOptions = {
+                    method: 'POST',
+                    body: new URLSearchParams({ _username: email, _password: password })
+                };
+                await apiFetch(endpoint, authMode === 'login' ? loginOptions : {
+                    method: 'POST',
+                    body: JSON.stringify({ email, password })
+                });
+                if (authMode === 'register') {
+                    await apiFetch('/api/login-check', loginOptions);
+                }
+                document.getElementById('auth-error').classList.add('hidden');
+                await authenticate();
+            } catch (error) {
+                showAuthError(error.message);
+            }
         }
 
         function switchTab(tabId) {
@@ -1062,21 +1170,26 @@
 
             if (!name) return;
 
-            appData.exercises.push({
-                id: 'ex_' + Date.now(),
+            const exercise = {
                 name: name,
                 group: group,
                 sets: [
                     { weight: 40, reps: 10, done: false, rpe: 8 },
                     { weight: 40, reps: 10, done: false, rpe: 8 }
                 ]
-            });
+            };
 
-            saveData();
-            renderExerciseLogger();
-            closeModal('modal-add-exercise');
-            document.getElementById('new-ex-name').value = '';
-            showToast('Exercice ajouté ! 🔥', 'success');
+            apiFetch('/api/exercises', {
+                method: 'POST',
+                body: JSON.stringify({ name, muscleGroup: group })
+            }).then(([created]) => {
+                appData.exercises.push({ ...exercise, id: created.id });
+                saveData();
+                renderExerciseLogger();
+                closeModal('modal-add-exercise');
+                document.getElementById('new-ex-name').value = '';
+                showToast('Exercice ajouté ! 🔥', 'success');
+            }).catch(error => showToast(error.message, 'warning'));
         }
 
         function openPRModal() {
@@ -1114,6 +1227,7 @@
             const arm = parseFloat(document.getElementById('m-arm').value) || 0;
             const chest = parseFloat(document.getElementById('m-chest').value) || 0;
             const waist = parseFloat(document.getElementById('m-waist').value) || 0;
+            const thigh = parseFloat(document.getElementById('m-thigh').value) || 0;
 
             const today = new Date().toLocaleDateString('fr-FR');
 
@@ -1126,10 +1240,19 @@
                 thigh: 59
             });
 
-            saveData();
-            renderMeasurements();
-            closeModal('modal-add-measurement');
-            showToast('Nouvelles mensurations enregistrées ! 📐', 'success');
+            apiFetch('/api/measurements', {
+                method: 'POST',
+                body: JSON.stringify({ weight, arm, chest, waist, thigh })
+            }).then(() => {
+                appData.measurements.unshift({
+                    date: new Date().toLocaleDateString('fr-FR'),
+                    weight, arm, chest, waist, thigh
+                });
+                saveData();
+                renderMeasurements();
+                closeModal('modal-add-measurement');
+                showToast('Nouvelles mensurations enregistrées ! 📐', 'success');
+            }).catch(error => showToast(error.message, 'warning'));
         }
 
         function closeModal(id) {
@@ -1147,7 +1270,7 @@
             if (type === 'warning') toast.classList.add('border-l-4', 'border-l-amber-500');
             if (type === 'info') toast.classList.add('border-l-4', 'border-l-cyan-500');
 
-            toast.innerHTML = message;
+            toast.textContent = message;
             container.appendChild(toast);
 
             setTimeout(() => {
@@ -1173,8 +1296,28 @@
             showToast(`Niveau d'énergie réglé sur ${rating}/5`, 'info');
         }
 
-        function finishWorkout() {
-            showToast('🎉 Séance terminée et enregistrée dans votre historique !', 'success');
+        async function finishWorkout() {
+            const sets = appData.exercises.flatMap(exercise => exercise.sets.map(set => ({
+                exerciseId: Number(exercise.id),
+                weight: Number(set.weight),
+                reps: Number(set.reps),
+                rpe: set.rpe ? Number(set.rpe) : null,
+                completed: Boolean(set.done)
+            }))).filter(set => set.exerciseId > 0);
+            try {
+                await apiFetch('/api/sessions', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        name: document.getElementById('workout-routine-select').selectedOptions[0]?.text || 'Séance',
+                        energyRating: document.querySelectorAll('.energy-star.text-amber-400').length,
+                        sets
+                    })
+                });
+                showToast('🎉 Séance terminée et enregistrée dans votre historique !', 'success');
+            } catch (error) {
+                showToast(error.message, 'warning');
+                return;
+            }
             // Mark today completed
             const todayItem = appData.weekDays.find(d => d.id === 'thu');
             if (todayItem) {
@@ -1199,6 +1342,16 @@
             document.getElementById('streak-count').innerText = appData.streak || 4;
         }
 
+        function updateCurrentDate() {
+            const date = new Intl.DateTimeFormat('fr-FR', {
+                weekday: 'long',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric'
+            }).format(new Date());
+            document.getElementById('current-date-display').innerText = date.charAt(0).toUpperCase() + date.slice(1);
+        }
+
         function saveSettings() {
             const nameInput = document.getElementById('setting-user-name').value;
             appData.profileName = nameInput;
@@ -1213,8 +1366,7 @@
             location.reload();
         }
 
-        // Initialize App on load
-        window.onload = function() {
+        function initializeApp() {
             switchTab('dashboard');
             renderWeeklyGrid();
             renderExerciseLogger();
@@ -1222,7 +1374,17 @@
             renderMeasurements();
             updateRestDisplay();
             updateHeaderAndStats();
-        };
+            updateCurrentDate();
+        }
+
+        document.getElementById('auth-form').addEventListener('submit', submitAuth);
+        document.getElementById('auth-mode-toggle').addEventListener('click', () => {
+            authMode = authMode === 'login' ? 'register' : 'login';
+            document.getElementById('auth-submit').textContent = authMode === 'login' ? 'Se connecter' : 'Créer mon compte';
+            document.getElementById('auth-mode-toggle').textContent = authMode === 'login' ? 'Créer un compte' : 'J’ai déjà un compte';
+            document.getElementById('auth-password').autocomplete = authMode === 'login' ? 'current-password' : 'new-password';
+        });
+        authenticate();
     </script>
 </body>
 </html>

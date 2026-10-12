@@ -50,6 +50,12 @@ final class ApiController
         return new JsonResponse(['id' => $user->getId(), 'email' => $user->getEmail(), 'roles' => $user->getRoles()]);
     }
 
+    #[Route('/login-check', name: 'api_login_check', methods: ['POST'])]
+    public function loginCheck(): JsonResponse
+    {
+        return new JsonResponse(['error' => 'Identifiants invalides.'], Response::HTTP_UNAUTHORIZED);
+    }
+
     #[Route('/me', methods: ['GET'])]
     public function me(#[CurrentUser] User $user): JsonResponse
     {
@@ -69,6 +75,7 @@ final class ApiController
             $exercise = (new Exercise())->setName($name)->setMuscleGroup($group);
             $entityManager->persist($exercise);
             $entityManager->flush();
+            return new JsonResponse(['id' => $exercise->getId(), 'name' => $exercise->getName(), 'muscleGroup' => $exercise->getMuscleGroup()], Response::HTTP_CREATED);
         }
         $items = $entityManager->getRepository(Exercise::class)->findBy([], ['name' => 'ASC']);
         return new JsonResponse(array_map(static fn (Exercise $item): array => ['id' => $item->getId(), 'name' => $item->getName(), 'muscleGroup' => $item->getMuscleGroup()], $items), $request->isMethod('POST') ? Response::HTTP_CREATED : Response::HTTP_OK);
