@@ -728,10 +728,11 @@
         }
 
         async function loadRemoteData() {
-            const [exercises, measurements, sessions] = await Promise.all([
+            const [exercises, measurements, sessions, records] = await Promise.all([
                 apiFetch('/api/exercises'),
                 apiFetch('/api/measurements'),
-                apiFetch('/api/sessions')
+                apiFetch('/api/sessions'),
+                apiFetch('/api/records')
             ]);
             appData.exercises = exercises.map(exercise => ({
                     id: exercise.id,
@@ -743,6 +744,7 @@
                 ...measurement,
                 thigh: measurement.thigh || 0
             }));
+            appData.prs = records;
             appData.weekDays = appData.weekDays.map(day => ({ ...day }));
             appData.streak = sessions.length;
             saveData();
@@ -758,6 +760,7 @@
             try {
                 currentUser = await apiFetch('/api/me');
                 document.getElementById('auth-overlay').classList.add('hidden');
+                document.getElementById('auth-logout').classList.remove('hidden');
                 appData.profileName = currentUser.email;
                 await loadRemoteData();
                 initializeApp();
@@ -1203,19 +1206,16 @@
 
             if (!name || !weight) return;
 
-            const today = new Date().toLocaleDateString('fr-FR');
-            appData.prs.unshift({
-                id: 'pr_' + Date.now(),
-                name: name,
-                weight: weight,
-                reps: reps,
-                date: today
-            });
-
-            saveData();
-            renderPRs();
-            closeModal('modal-add-pr');
-            showToast('Nouveau Record enregistré avec succès ! 🏆', 'success');
+            apiFetch('/api/records', {
+                method: 'POST',
+                body: JSON.stringify({ name, weight, reps })
+            }).then(record => {
+                appData.prs.unshift(record);
+                saveData();
+                renderPRs();
+                closeModal('modal-add-pr');
+                showToast('Nouveau Record enregistré avec succès ! 🏆', 'success');
+            }).catch(error => showToast(error.message, 'warning'));
         }
 
         function openMeasurementModal() {
@@ -1378,6 +1378,10 @@
         }
 
         document.getElementById('auth-form').addEventListener('submit', submitAuth);
+        document.getElementById('auth-logout').addEventListener('click', async () => {
+            await fetch('/logout', { credentials: 'same-origin' });
+            window.location.reload();
+        });
         document.getElementById('auth-mode-toggle').addEventListener('click', () => {
             authMode = authMode === 'login' ? 'register' : 'login';
             document.getElementById('auth-submit').textContent = authMode === 'login' ? 'Se connecter' : 'Créer mon compte';

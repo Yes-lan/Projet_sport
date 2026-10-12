@@ -4,6 +4,7 @@ namespace App\Controller;
 
 use App\Entity\Exercise;
 use App\Entity\Measurement;
+use App\Entity\PersonalRecord;
 use App\Entity\User;
 use App\Entity\WorkoutSession;
 use App\Entity\WorkoutSet;
@@ -116,6 +117,26 @@ final class ApiController
         }
         $items = $entityManager->getRepository(Measurement::class)->findBy(['user' => $user], ['measuredAt' => 'DESC']);
         return new JsonResponse(array_map(static fn (Measurement $item): array => $item->toArray(), $items), $request->isMethod('POST') ? Response::HTTP_CREATED : Response::HTTP_OK);
+    }
+
+    #[Route('/records', methods: ['GET', 'POST'])]
+    public function records(Request $request, #[CurrentUser] User $user, EntityManagerInterface $entityManager): JsonResponse
+    {
+        if ($request->isMethod('POST')) {
+            $data = $this->json($request);
+            $name = trim((string) ($data['name'] ?? ''));
+            $weight = (float) ($data['weight'] ?? 0);
+            $reps = (int) ($data['reps'] ?? 0);
+            if ($name === '' || $weight <= 0 || $reps < 1) {
+                return new JsonResponse(['error' => 'Le mouvement, la charge et les répétitions sont obligatoires.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            $record = new PersonalRecord($user, $name, $weight, $reps);
+            $entityManager->persist($record);
+            $entityManager->flush();
+            return new JsonResponse($record->toArray(), Response::HTTP_CREATED);
+        }
+        $records = $entityManager->getRepository(PersonalRecord::class)->findBy(['user' => $user], ['recordedAt' => 'DESC']);
+        return new JsonResponse(array_map(static fn (PersonalRecord $record): array => $record->toArray(), $records));
     }
 
     private function json(Request $request): array
